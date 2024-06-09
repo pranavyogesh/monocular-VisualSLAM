@@ -251,15 +251,41 @@ class VisualOdometry():
         elif (max == 1):
             # print(t)
             return R2, np.ndarray.flatten(t)
+        
 
 
+    def compute_point_cloud(self):
+        point_cloud = []
+        origin_pose = self.gt_poses[0]  # Set origin pose as the pose of the first frame
+        for i in range(1, len(self.images)):
+            q1, q2 = self.get_matches(i)  # Detect and match features
+            Essential, _ = cv2.findEssentialMat(q1, q2, self.K)  # Estimate essential matrix
+            R, t = self.decomp_essential_mat(Essential, q1, q2)  # Decompose essential matrix
+            T_cam_to_origin = self._form_transf(R, t)  # Transformation from camera to origin frame
+            T_origin_to_cam = np.linalg.inv(T_cam_to_origin)  # Transformation from origin to camera frame
+            K = np.concatenate((self.K, np.zeros((3, 1))), axis=1)
+            P = K @ T_cam_to_origin  # Projection matrix in camera frame
+            hom_Q = cv2.triangulatePoints(self.P, P, q1.T, q2.T)  # Triangulate points
+            Q = hom_Q[:3, :] / hom_Q[3, :]  # Convert to 3D coordinates
+            # Transform 3D points to origin frame
+            Q_origin_frame = np.dot(T_origin_to_cam[:3, :3], Q) + T_origin_to_cam[:3, 3].reshape(-1, 1)
+            point_cloud.extend(Q_origin_frame.T.tolist())  # Add points to point cloud
+        return np.array(point_cloud)
+    def save_point_cloud(self, point_cloud, filename='point_cloud.ply'):
+        with open(filename, 'w') as f:
+            f.write(f'ply\nformat ascii 1.0\n')
+            f.write(f'element vertex {len(point_cloud)}\n')
+            f.write('property float x\nproperty float y\nproperty float z\n')
+            f.write('end_header\n')
+            for point in point_cloud:
+                f.write(f'{point[0]} {point[1]} {point[2]}\n')
 
 def main():
-    data_dir = 'KITTI_sequence_2'  # Try KITTI_sequence_2 too
+    data_dir = 'KITTI_sequence_1'  # Try KITTI_sequence_2 too
     vo = VisualOdometry(data_dir)
 
 
-    # play_trip(vo.images)  # Comment out to not play the trip
+    play_trip(vo.images)  # Comment out to not play the trip
 
     gt_path = []
     estimated_path = []
@@ -279,7 +305,8 @@ def main():
   
     
     plotting.visualize_paths(gt_path, estimated_path, "Visual Odometry", file_out=os.path.basename(data_dir) + ".html")
-
-
+    # Compute and save the point cloud
+    point_cloud = vo.compute_point_cloud()
+    vo.save_point_cloud(point_cloud, 'point_cloud.ply')
 if __name__ == "__main__":
     main()
